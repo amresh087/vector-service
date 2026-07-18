@@ -1,0 +1,25 @@
+server:
+  port: 5055
+
+spring:
+  application:
+    name: vector-service
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/retail_db
+    username: root
+    password: ellenverma
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+
+
+# Qdrant Database Configuration
+qdrant:
+  host: localhost
+  port: 6334
+  use-tls: false
+  collection-name: products
+  # If your server requires authentication, uncomment the line below:
+  # api-key: your_secret_api_key    
