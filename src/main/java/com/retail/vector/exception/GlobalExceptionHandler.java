@@ -6,9 +6,9 @@ import org.springframework.web.bind.annotation.*;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    @ExceptionHandler(ProductException.class)
+    @ExceptionHandler(VectorException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public String handleProductException(ProductException ex) {
+    public String handleProductException(VectorException ex) {
         return ex.getMessage();
     }
 }

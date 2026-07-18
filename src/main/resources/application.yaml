@@ -20,6 +20,11 @@ qdrant:
   host: localhost
   port: 6334
   use-tls: false
-  collection-name: products
+  collection-name: mapping-documents
   # If your server requires authentication, uncomment the line below:
-  # api-key: your_secret_api_key    
+  # api-key: your_secret_api_key   
+
+
+ai:
+  service:
+    url: http://localhost:5056   

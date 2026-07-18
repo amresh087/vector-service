@@ -7,8 +7,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import com.retail.vector.dto.EmbeddingRequest;
 import com.retail.vector.dto.EmbeddingResponse;
 
-@FeignClient(name = "ai-service", url = "http://localhost:2050")
-public interface AiServiceClient {
+@FeignClient(name = "ai-service", url = "${ai.service.url}")
+public interface AiTranformationServiceClient {
 
         @PostMapping("/ai/embeddings")
         public ResponseEntity<EmbeddingResponse> createEmbedding(@RequestBody EmbeddingRequest request) ;
