@@ -1,16 +1,21 @@
 package com.retail.vector.dto;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 import java.util.List;
 
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class EmbeddingResponse {
     private List<Double> embedding;
+
+    public EmbeddingResponse() {}
+
+    public EmbeddingResponse(List<Double> embedding) {
+        this.embedding = embedding;
+    }
+
+    public List<Double> getEmbedding() {
+        return embedding;
+    }
+
+    public void setEmbedding(List<Double> embedding) {
+        this.embedding = embedding;
+    }
 }

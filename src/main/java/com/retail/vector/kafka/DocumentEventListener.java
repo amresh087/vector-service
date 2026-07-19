@@ -6,11 +6,16 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 
 import com.retail.vector.dto.DocumentEvent;
+import com.retail.vector.service.DocumentProcessingService;
+import lombok.RequiredArgsConstructor;
 
 @Service
+@RequiredArgsConstructor
 public class DocumentEventListener {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentEventListener.class);
+
+    private final DocumentProcessingService documentProcessingService;
 
 
      @KafkaListener(topics = "${app.kafka.topic.document-events}", groupId = "${spring.kafka.consumer.group-id:document-service-group}")        
@@ -56,24 +61,18 @@ public class DocumentEventListener {
     private void handleDocumentCreated(DocumentEvent event) {
         log.info("Handling DOCUMENT_CREATED event: document_id={}, tenant={}", 
             event.getDocumentId(), event.getTenant());
-        
-        // Generate embeddings and index document
-        // This will be implemented to call the AI transformation service
-        // to generate vector embeddings and store in Qdrant
+        // Delegate to processing service (downloads from MinIO, applies XSLT, indexes in Qdrant)
+        documentProcessingService.processCreateOrUpdate(event);
     }
     
     private void handleDocumentUpdated(DocumentEvent event) {
         log.info("Handling DOCUMENT_UPDATED event: document_id={}, status={}", 
             event.getDocumentId(), event.getStatus());
-        
-        // Re-generate embeddings and update document index
-        // This will be implemented to update existing vectors in Qdrant
+        documentProcessingService.processCreateOrUpdate(event);
     }
     
     private void handleDocumentDeleted(DocumentEvent event) {
         log.info("Handling DOCUMENT_DELETED event: document_id={}", event.getDocumentId());
-        
-        // Remove document from vector database
-        // This will be implemented to delete vectors from Qdrant
+        documentProcessingService.processDelete(event);
     }
 }

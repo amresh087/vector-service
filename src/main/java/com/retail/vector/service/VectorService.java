@@ -58,8 +58,8 @@ public class VectorService {
      */
     public void genrateEmbeddingAndTriggerQdrantUpsert(ProductResponse response) {
          //Get embedding for the product name and save it to the database
-       String embeddingPrompt = this.buildDataEmbedding(response);
-       ResponseEntity<EmbeddingResponse> embeddingResponse = aiTranformationServiceClient.createEmbedding(EmbeddingRequest.builder().prompt(embeddingPrompt).build());
+    String embeddingPrompt = this.buildDataEmbedding(response);
+    ResponseEntity<EmbeddingResponse> embeddingResponse = aiTranformationServiceClient.createEmbedding(new EmbeddingRequest(embeddingPrompt));
        List<Double> embedding=embeddingResponse.getBody().getEmbedding();
        this.buildQdrantPayloadAndSaveQdrant(response, embedding);
     }

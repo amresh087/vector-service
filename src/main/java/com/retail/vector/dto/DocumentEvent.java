@@ -1,13 +1,7 @@
 package com.retail.vector.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
 public class DocumentEvent {
 
     @JsonProperty("document_id")
@@ -36,5 +30,34 @@ public class DocumentEvent {
 
     @JsonProperty("timestamp")
     private String timestamp;
+
+    public DocumentEvent() {}
+
+    public String getDocumentId() { return documentId; }
+    public void setDocumentId(String documentId) { this.documentId = documentId; }
+
+    public String getDocumentName() { return documentName; }
+    public void setDocumentName(String documentName) { this.documentName = documentName; }
+
+    public String getDocumentType() { return documentType; }
+    public void setDocumentType(String documentType) { this.documentType = documentType; }
+
+    public String getTenant() { return tenant; }
+    public void setTenant(String tenant) { this.tenant = tenant; }
+
+    public String getTransactionTypeCode() { return transactionTypeCode; }
+    public void setTransactionTypeCode(String transactionTypeCode) { this.transactionTypeCode = transactionTypeCode; }
+
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+
+    public String getObjectName() { return objectName; }
+    public void setObjectName(String objectName) { this.objectName = objectName; }
+
+    public String getEventType() { return eventType; }
+    public void setEventType(String eventType) { this.eventType = eventType; }
+
+    public String getTimestamp() { return timestamp; }
+    public void setTimestamp(String timestamp) { this.timestamp = timestamp; }
 
 }

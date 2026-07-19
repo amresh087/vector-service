@@ -5,67 +5,74 @@ spring:
   application:
     name: vector-service
 
-  datasource:
-    url: jdbc:mysql://localhost:3306/retail_db
-    username: root
-    password: ellenverma
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: true
 
   kafka:
     bootstrap-servers: localhost:9092
+
     consumer:
-      group-id: document-service-group
+      group-id: vector-service-group
       auto-offset-reset: latest
       enable-auto-commit: true
+
       key-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+
       properties:
         spring.deserializer.key.delegate.class: org.apache.kafka.common.serialization.StringDeserializer
         spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+
         spring.json.trusted.packages: "*"
         spring.json.use.type.headers: false
         spring.json.value.default.type: com.retail.vector.dto.DocumentEvent
 
+#############################################################
+# MinIO
+#############################################################
+minio:
+  endpoint: http://localhost:9000
+  access-key: minioadmin
+  secret-key: minioadmin
+  bucket-name: documents
 
-# Qdrant Database Configuration
+#############################################################
+# Qdrant
+#############################################################
 qdrant:
   host: localhost
   port: 6334
   use-tls: false
   collection-name: mapping-documents
-  # If your server requires authentication, uncomment the line below:
-  # api-key: your_secret_api_key   
+  # api-key:
 
-  kafka:
-    bootstrap-servers: localhost:9092
+#############################################################
+# Ollama
+#############################################################
+ollama:
+  base-url: http://localhost:11434
 
-    consumer:
-      group-id: document-service-group
-      auto-offset-reset: latest
-      enable-auto-commit: true
+  embedding:
+    model: nomic-embed-text:latest
 
-      key-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
-
-      properties:
-        spring.deserializer.key.delegate.class: org.apache.kafka.common.serialization.StringDeserializer
-        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
-
-        spring.json.trusted.packages: "*"
-        spring.json.use.type.headers: false
-
-        # Change this package if your TickDto is elsewhere
-        spring.json.value.default.type: com.retail.vector.dto.DocumentEvent
-
-
+#############################################################
+# AI Service
+#############################################################
 ai:
   service:
-    url: http://localhost:5056   
+    url: http://localhost:5056
 
+#############################################################
+# Kafka Topics
+#############################################################
 app:
   kafka:
     topic:
       document-events: document-events
+
+#############################################################
+# Logging
+#############################################################
+logging:
+  level:
+    root: INFO
+    com.retail.vector: DEBUG
+    org.springframework.kafka: INFO
