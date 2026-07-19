@@ -19,6 +19,9 @@ public class DocumentEvent {
     @JsonProperty("transaction_type_code")
     private String transactionTypeCode;
 
+    @JsonProperty("mapping_type")
+    private String mappingType;
+
     @JsonProperty("status")
     private String status;
 
@@ -47,6 +50,9 @@ public class DocumentEvent {
 
     public String getTransactionTypeCode() { return transactionTypeCode; }
     public void setTransactionTypeCode(String transactionTypeCode) { this.transactionTypeCode = transactionTypeCode; }
+
+    public String getMappingType() { return mappingType; }
+    public void setMappingType(String mappingType) { this.mappingType = mappingType; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }

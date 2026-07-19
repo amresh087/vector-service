@@ -72,6 +72,7 @@ public class DocumentProcessingService {
                 payloadMap.put("documentName", value(event.getDocumentName()));
                 payloadMap.put("tenant", value(event.getTenant()));
                 payloadMap.put("transactionTypeCode", value(event.getTransactionTypeCode()));
+                payloadMap.put("mappingType", value(event.getMappingType()));
                 payloadMap.put("objectName", value(event.getObjectName()));
                 payloadMap.put("status", value(event.getStatus()));
 
@@ -89,7 +90,6 @@ public class DocumentProcessingService {
                 qdrantClient.upsertAsync(collectionName, List.of(point)).get();
                 log.info("Indexed document {} into Qdrant collection {}", event.getDocumentId(), collectionName);
             }
-
         } catch (ExecutionException e) {
             log.error(
                     "Qdrant gRPC error while processing document {}: {} (ensure Qdrant is running on configured host/port)",
