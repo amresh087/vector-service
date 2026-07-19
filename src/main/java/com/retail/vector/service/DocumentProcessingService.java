@@ -5,11 +5,8 @@ import com.retail.vector.dto.DocumentEvent;
 import com.retail.vector.dto.EmbeddingRequest;
 import com.retail.vector.dto.EmbeddingResponse;
 import io.minio.GetObjectArgs;
-import io.minio.ListObjectsArgs;
 import io.minio.MinioClient;
-import io.minio.PutObjectArgs;
-import io.minio.Result;
-import io.minio.messages.Item;
+// removed unused MinIO put import; MinIO file storage for XSLT mappings removed
 import io.qdrant.client.QdrantClient;
 import io.qdrant.client.grpc.Points.PointStruct;
 import lombok.RequiredArgsConstructor;
@@ -19,15 +16,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
-import javax.xml.transform.Source;
-import javax.xml.transform.Transformer;
-import javax.xml.transform.TransformerFactory;
-import javax.xml.transform.stream.StreamResult;
-import javax.xml.transform.stream.StreamSource;
-import java.io.ByteArrayInputStream;
 import java.io.InputStream;
-import java.io.StringReader;
-import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
@@ -67,40 +56,15 @@ public class DocumentProcessingService {
                     GetObjectArgs.builder().bucket(bucketName).object(event.getObjectName()).build())) {
                 String original = new String(objStream.readAllBytes(), StandardCharsets.UTF_8);
 
-                // Try to find a matching XSLT mapping file in the same bucket
-                String xslt = findXsltFor(event);
-                String idocContent = original;
-                if (xslt != null) {
-                    try {
-                        idocContent = applyXslt(original, xslt);
-                    } catch (Exception e) {
-                        log.warn("Failed to apply XSLT for document {}, continuing with original content", event.getDocumentId(), e);
-                        idocContent = original;
-                    }
-                }
-
-                // Save generated idoc back to MinIO
-                byte[] idocBytes = idocContent.getBytes(StandardCharsets.UTF_8);
-                String idocObjectName = event.getDocumentId() + "-idoc-content.xml";
-                minioClient.putObject(PutObjectArgs.builder()
-                        .bucket(bucketName)
-                        .object(idocObjectName)
-                        .stream(new ByteArrayInputStream(idocBytes), idocBytes.length, -1)
-                        .contentType("application/xml")
-                        .build());
-
-                // Generate embedding using AI transformation service
-                ResponseEntity<EmbeddingResponse> resp = aiClient.createEmbedding(new EmbeddingRequest(idocContent));
+                // Generate embedding using AI transformation service from the original content
+                // only
+                ResponseEntity<EmbeddingResponse> resp = aiClient.createEmbedding(new EmbeddingRequest(original));
                 List<Double> embedding = resp.getBody() != null ? resp.getBody().getEmbedding() : null;
 
-                if (embedding == null || embedding.isEmpty()) {
+                float[] vectorArray = toFloatVector(embedding);
+                if (vectorArray.length == 0) {
                     log.warn("Embedding generation returned empty for document {}", event.getDocumentId());
                     return;
-                }
-
-                float[] vectorArray = new float[embedding.size()];
-                for (int i = 0; i < embedding.size(); i++) {
-                    vectorArray[i] = embedding.get(i).floatValue();
                 }
 
                 Map<String, io.qdrant.client.grpc.JsonWithInt.Value> payloadMap = new HashMap<>();
@@ -111,24 +75,28 @@ public class DocumentProcessingService {
                 payloadMap.put("objectName", value(event.getObjectName()));
                 payloadMap.put("status", value(event.getStatus()));
 
-                // Qdrant PointIdFactory expects a numeric id; derive a stable long from the documentId string
-                long numericId = UUID.nameUUIDFromBytes(event.getDocumentId().getBytes(StandardCharsets.UTF_8)).getMostSignificantBits() & Long.MAX_VALUE;
+                // Qdrant PointIdFactory expects a numeric id; derive a stable long from the
+                // documentId string
+                long numericId = UUID.nameUUIDFromBytes(event.getDocumentId().getBytes(StandardCharsets.UTF_8))
+                        .getMostSignificantBits() & Long.MAX_VALUE;
 
                 PointStruct point = PointStruct.newBuilder()
-                    .setId(id(numericId))
-                    .setVectors(vectors(vectorArray))
-                    .putAllPayload(payloadMap)
-                    .build();
+                        .setId(id(numericId))
+                        .setVectors(vectors(vectorArray))
+                        .putAllPayload(payloadMap)
+                        .build();
 
                 qdrantClient.upsertAsync(collectionName, List.of(point)).get();
                 log.info("Indexed document {} into Qdrant collection {}", event.getDocumentId(), collectionName);
             }
 
         } catch (ExecutionException e) {
-            log.error("Qdrant gRPC error while processing document {}: {} (ensure Qdrant is running on configured host/port)", 
-                event.getDocumentId(), e.getCause() != null ? e.getCause().getMessage() : e.getMessage(), e);
+            log.error(
+                    "Qdrant gRPC error while processing document {}: {} (ensure Qdrant is running on configured host/port)",
+                    event.getDocumentId(), e.getCause() != null ? e.getCause().getMessage() : e.getMessage(), e);
         } catch (InterruptedException e) {
-            log.error("Interrupted while processing document {}", event.getDocumentId(), e);
+            log.warn("Processing of document {} was interrupted while waiting on a downstream store",
+                    event.getDocumentId(), e);
             Thread.currentThread().interrupt();
         } catch (Exception e) {
             log.error("Error processing document event {}", event, e);
@@ -152,43 +120,24 @@ public class DocumentProcessingService {
             qdrantClient.upsertAsync(collectionName, List.of(point)).get();
             log.info("Marked document {} as DELETED in Qdrant collection {}", event.getDocumentId(), collectionName);
 
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Failed to delete/mark document {} in Qdrant", event.getDocumentId(), e);
+        } catch (InterruptedException e) {
+            log.warn("Delete update for document {} was interrupted while waiting on Qdrant", event.getDocumentId(), e);
             Thread.currentThread().interrupt();
+        } catch (ExecutionException e) {
+            log.error("Failed to delete/mark document {} in Qdrant", event.getDocumentId(), e);
         }
     }
 
-    private String findXsltFor(DocumentEvent event) {
-        try {
-            if (event.getObjectName() != null) {
-
-                try {
-                    InputStream xsltIs = minioClient.getObject(GetObjectArgs.builder()
-                            .bucket(bucketName)
-                            .object(event.getObjectName())
-                            .build());
-                    log.debug("Found XSLT mapping at: {}", event.getObjectName());
-                    return new String(xsltIs.readAllBytes(), StandardCharsets.UTF_8);
-                } catch (Exception e) {
-                    log.debug("No XSLT mapping found at: {}", event.getObjectName());
-                }
-            }
-
-            log.debug("No XSLT mapping found for document {}", event.getDocumentId());
-        } catch (Exception e) {
-            log.debug("Error searching for XSLT mapping for document {}", event.getDocumentId(), e);
+    static float[] toFloatVector(List<Double> embedding) {
+        if (embedding == null || embedding.isEmpty()) {
+            return new float[0];
         }
-        return null;
+
+        float[] vectorArray = new float[embedding.size()];
+        for (int i = 0; i < embedding.size(); i++) {
+            vectorArray[i] = embedding.get(i).floatValue();
+        }
+        return vectorArray;
     }
 
-    private String applyXslt(String input, String xslt) throws Exception {
-        TransformerFactory factory = TransformerFactory.newInstance();
-        Source xsltSource = new StreamSource(new StringReader(xslt));
-        Transformer transformer = factory.newTransformer(xsltSource);
-
-        Source text = new StreamSource(new StringReader(input));
-        StringWriter writer = new StringWriter();
-        transformer.transform(text, new StreamResult(writer));
-        return writer.toString();
-    }
 }

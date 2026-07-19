@@ -73,6 +73,6 @@ public class DocumentEventListener {
     
     private void handleDocumentDeleted(DocumentEvent event) {
         log.info("Handling DOCUMENT_DELETED event: document_id={}", event.getDocumentId());
-        documentProcessingService.processDelete(event);
+      //  documentProcessingService.processDelete(event);
     }
 }
