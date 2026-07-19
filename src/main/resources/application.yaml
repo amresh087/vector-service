@@ -14,6 +14,21 @@ spring:
       ddl-auto: update
     show-sql: true
 
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: document-service-group
+      auto-offset-reset: latest
+      enable-auto-commit: true
+      key-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.key.delegate.class: org.apache.kafka.common.serialization.StringDeserializer
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.trusted.packages: "*"
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: com.retail.vector.dto.DocumentEvent
+
 
 # Qdrant Database Configuration
 qdrant:
@@ -24,7 +39,33 @@ qdrant:
   # If your server requires authentication, uncomment the line below:
   # api-key: your_secret_api_key   
 
+  kafka:
+    bootstrap-servers: localhost:9092
+
+    consumer:
+      group-id: document-service-group
+      auto-offset-reset: latest
+      enable-auto-commit: true
+
+      key-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+
+      properties:
+        spring.deserializer.key.delegate.class: org.apache.kafka.common.serialization.StringDeserializer
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+
+        spring.json.trusted.packages: "*"
+        spring.json.use.type.headers: false
+
+        # Change this package if your TickDto is elsewhere
+        spring.json.value.default.type: com.retail.vector.dto.DocumentEvent
+
 
 ai:
   service:
     url: http://localhost:5056   
+
+app:
+  kafka:
+    topic:
+      document-events: document-events
