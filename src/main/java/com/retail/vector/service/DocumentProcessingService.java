@@ -8,6 +8,7 @@ import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
 // removed unused MinIO put import; MinIO file storage for XSLT mappings removed
 import io.qdrant.client.QdrantClient;
+import io.qdrant.client.grpc.Points;
 import io.qdrant.client.grpc.Points.PointStruct;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -105,26 +106,33 @@ public class DocumentProcessingService {
 
     public void processDelete(DocumentEvent event) {
         try {
-            // Mark document as DELETED by upserting a payload with status=DELETED using numeric id
             long numericIdDelete = UUID.nameUUIDFromBytes(event.getDocumentId().getBytes(StandardCharsets.UTF_8)).getMostSignificantBits() & Long.MAX_VALUE;
 
-            Map<String, io.qdrant.client.grpc.JsonWithInt.Value> payloadMap = new HashMap<>();
-            payloadMap.put("documentId", value(event.getDocumentId()));
-            payloadMap.put("status", value("DELETED"));
-
-            PointStruct point = PointStruct.newBuilder()
-                    .setId(id(numericIdDelete))
-                    .putAllPayload(payloadMap)
+            Points.PointId qdrantPointId = Points.PointId.newBuilder()
+                    .setNum(numericIdDelete)
                     .build();
 
-            qdrantClient.upsertAsync(collectionName, List.of(point)).get();
-            log.info("Marked document {} as DELETED in Qdrant collection {}", event.getDocumentId(), collectionName);
+            Points.PointsIdsList pointsIdsList = Points.PointsIdsList.newBuilder()
+                    .addIds(qdrantPointId)
+                    .build();
+
+            Points.PointsSelector pointsSelector = Points.PointsSelector.newBuilder()
+                    .setPoints(pointsIdsList)
+                    .build();
+
+            Points.DeletePoints deletePoints = Points.DeletePoints.newBuilder()
+                    .setCollectionName(collectionName)
+                    .setPoints(pointsSelector)
+                    .build();
+
+            qdrantClient.deleteAsync(deletePoints).get();
+            log.info("Deleted document {} from Qdrant collection {}", event.getDocumentId(), collectionName);
 
         } catch (InterruptedException e) {
             log.warn("Delete update for document {} was interrupted while waiting on Qdrant", event.getDocumentId(), e);
             Thread.currentThread().interrupt();
         } catch (ExecutionException e) {
-            log.error("Failed to delete/mark document {} in Qdrant", event.getDocumentId(), e);
+            log.error("Failed to delete document {} in Qdrant", event.getDocumentId(), e);
         }
     }
 
