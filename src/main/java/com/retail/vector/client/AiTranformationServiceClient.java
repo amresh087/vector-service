@@ -13,7 +13,4 @@ public interface AiTranformationServiceClient {
         @PostMapping("/ai/embeddings")
         public ResponseEntity<EmbeddingResponse> createEmbedding(@RequestBody EmbeddingRequest request) ;
        
-       
-    
-
 }
