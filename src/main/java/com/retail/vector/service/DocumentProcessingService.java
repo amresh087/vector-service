@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,41 +56,89 @@ public class DocumentProcessingService {
             // Download original object
             try (InputStream objStream = minioClient.getObject(
                     GetObjectArgs.builder().bucket(bucketName).object(event.getObjectName()).build())) {
+
+
                 String original = new String(objStream.readAllBytes(), StandardCharsets.UTF_8);
+                boolean shouldChunkXml = "mapping-xslt-templet-xml".equalsIgnoreCase(event.getMappingType())
+                        || "idoc-output-sample".equalsIgnoreCase(event.getMappingType());
 
-                // Generate embedding using AI transformation service from the original content
-                // only
-                ResponseEntity<EmbeddingResponse> resp = aiClient.createEmbedding(new EmbeddingRequest(original));
-                List<Double> embedding = resp.getBody() != null ? resp.getBody().getEmbedding() : null;
+                if (shouldChunkXml) {
+                    List<String> chunkTexts = XmlChunker.splitXmlChunks(original);
+                    List<PointStruct> points = new ArrayList<>();
 
-                float[] vectorArray = toFloatVector(embedding);
-                if (vectorArray.length == 0) {
-                    log.warn("Embedding generation returned empty for document {}", event.getDocumentId());
-                    return;
+                    for (int chunkIndex = 0; chunkIndex < chunkTexts.size(); chunkIndex++) {
+                        String chunkText = chunkTexts.get(chunkIndex);
+                        ResponseEntity<EmbeddingResponse> resp = aiClient.createEmbedding(new EmbeddingRequest(chunkText));
+                        List<Double> embedding = resp.getBody() != null ? resp.getBody().getEmbedding() : null;
+
+                        System.out.println("Embedding for document " + event.getDocumentId() + " chunk " + chunkIndex + ": " + embedding);
+
+                        
+                        float[] vectorArray = toFloatVector(embedding);
+                        if (vectorArray.length == 0) {
+                            log.warn("Embedding generation returned empty for document {} chunk {}", event.getDocumentId(), chunkIndex);
+                            continue;
+                        }
+
+                        Map<String, io.qdrant.client.grpc.JsonWithInt.Value> payloadMap = new HashMap<>();
+                        payloadMap.put("documentId", value(event.getDocumentId()));
+                        payloadMap.put("documentName", value(event.getDocumentName()));
+                        payloadMap.put("tenant", value(event.getTenant()));
+                        payloadMap.put("transactionTypeCode", value(event.getTransactionTypeCode()));
+                        payloadMap.put("mappingType", value(event.getMappingType()));
+                        payloadMap.put("objectName", value(event.getObjectName()));
+                        payloadMap.put("status", value(event.getStatus()));
+                        payloadMap.put("xsltChunkIndex", value(chunkIndex));
+                        payloadMap.put("xsltChunkCount", value(chunkTexts.size()));
+                        payloadMap.put("xsltChunkText", value(chunkText));
+
+                        long numericId = UUID.nameUUIDFromBytes(
+                                (event.getDocumentId() + "-" + chunkIndex).getBytes(StandardCharsets.UTF_8))
+                                .getMostSignificantBits() & Long.MAX_VALUE;
+
+                        PointStruct point = PointStruct.newBuilder()
+                                .setId(id(numericId))
+                                .setVectors(vectors(vectorArray))
+                                .putAllPayload(payloadMap)
+                                .build();
+                        points.add(point);
+                    }
+
+                    if (!points.isEmpty()) {
+                        qdrantClient.upsertAsync(collectionName, points).get();
+                        log.info("Indexed document {} into Qdrant collection {} with {} chunks", event.getDocumentId(), collectionName, points.size());
+                    }
+                } else {
+                    ResponseEntity<EmbeddingResponse> resp = aiClient.createEmbedding(new EmbeddingRequest(original));
+                    List<Double> embedding = resp.getBody() != null ? resp.getBody().getEmbedding() : null;
+
+                    float[] vectorArray = toFloatVector(embedding);
+                    if (vectorArray.length == 0) {
+                        log.warn("Embedding generation returned empty for document {}", event.getDocumentId());
+                        return;
+                    }
+
+                    Map<String, io.qdrant.client.grpc.JsonWithInt.Value> payloadMap = new HashMap<>();
+                    payloadMap.put("documentId", value(event.getDocumentId()));
+                    payloadMap.put("documentName", value(event.getDocumentName()));
+                    payloadMap.put("tenant", value(event.getTenant()));
+                    payloadMap.put("transactionTypeCode", value(event.getTransactionTypeCode()));
+                    payloadMap.put("mappingType", value(event.getMappingType()));
+                    payloadMap.put("objectName", value(event.getObjectName()));
+                    payloadMap.put("status", value(event.getStatus()));
+
+                    long numericId = UUID.nameUUIDFromBytes(event.getDocumentId().getBytes(StandardCharsets.UTF_8))
+                            .getMostSignificantBits() & Long.MAX_VALUE;
+
+                    PointStruct point = PointStruct.newBuilder()
+                            .setId(id(numericId))
+                            .setVectors(vectors(vectorArray))
+                            .putAllPayload(payloadMap)
+                            .build();
+
+                    qdrantClient.upsertAsync(collectionName, List.of(point)).get();
+                    log.info("Indexed document {} into Qdrant collection {}", event.getDocumentId(), collectionName);
                 }
-
-                Map<String, io.qdrant.client.grpc.JsonWithInt.Value> payloadMap = new HashMap<>();
-                payloadMap.put("documentId", value(event.getDocumentId()));
-                payloadMap.put("documentName", value(event.getDocumentName()));
-                payloadMap.put("tenant", value(event.getTenant()));
-                payloadMap.put("transactionTypeCode", value(event.getTransactionTypeCode()));
-                payloadMap.put("mappingType", value(event.getMappingType()));
-                payloadMap.put("objectName", value(event.getObjectName()));
-                payloadMap.put("status", value(event.getStatus()));
-
-                // Qdrant PointIdFactory expects a numeric id; derive a stable long from the
-                // documentId string
-                long numericId = UUID.nameUUIDFromBytes(event.getDocumentId().getBytes(StandardCharsets.UTF_8))
-                        .getMostSignificantBits() & Long.MAX_VALUE;
-
-                PointStruct point = PointStruct.newBuilder()
-                        .setId(id(numericId))
-                        .setVectors(vectors(vectorArray))
-                        .putAllPayload(payloadMap)
-                        .build();
-
-                qdrantClient.upsertAsync(collectionName, List.of(point)).get();
-                log.info("Indexed document {} into Qdrant collection {}", event.getDocumentId(), collectionName);
             }
         } catch (ExecutionException e) {
             log.error(
@@ -102,6 +151,23 @@ public class DocumentProcessingService {
         } catch (Exception e) {
             log.error("Error processing document event {}", event, e);
         }
+    }
+
+    void embedXsltContentInPayload(String payloadText, Map<String, io.qdrant.client.grpc.JsonWithInt.Value> payloadMap) {
+        if (payloadText == null || payloadText.isBlank()) {
+            return;
+        }
+
+        boolean isXml = payloadText.trim().startsWith("<");
+        List<String> chunks = isXml
+                ? XmlChunker.splitXmlChunks(payloadText)
+                : XmlChunker.splitTextChunks(payloadText, 800);
+
+        for (int chunkIndex = 0; chunkIndex < chunks.size(); chunkIndex++) {
+            payloadMap.put("xsltChunk_" + chunkIndex, value(chunks.get(chunkIndex)));
+        }
+
+        payloadMap.put("xsltChunkCount", value(chunks.size()));
     }
 
     public void processDelete(DocumentEvent event) {

@@ -16,14 +16,14 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class VectorController {
 
-    private final VectorService productService;
+    private final VectorService vectorService;
 
 
     
     @PostMapping
     public ProductResponse create(@RequestBody ProductRequest request) {
 
-        return productService.create(request);
+        return vectorService.create(request);
     }
 
    
