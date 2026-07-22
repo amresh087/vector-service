@@ -4,6 +4,7 @@ import java.io.StringReader;
 import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Value;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -20,27 +21,34 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 
-public final class XmlChunker {
+public class XmlChunker {
 
-    private static final int QDRANT_PAYLOAD_CHUNK_SEGMENT_THRESHOLD = 2; // max segments per XML chunk
-    private static final int QDRANT_PAYLOAD_CHUNK_CHAR_THRESHOLD = 800; // max chars per XML chunk
+    private final int segmentThreshold;
+    private final int charThreshold;
 
-    private XmlChunker() {
+    public XmlChunker() {
+        this(2, 800);
     }
 
-    public static List<String> splitXmlChunks(String xml) {
+    public XmlChunker(@Value("${qdrant.payload.chunk-segment-threshold:2}") int segmentThreshold,
+                     @Value("${qdrant.payload.chunk-char-threshold:800}") int charThreshold) {
+        this.segmentThreshold = segmentThreshold;
+        this.charThreshold = charThreshold;
+    }
+
+    public List<String> splitXmlChunks(String xml) {
         try {
             DocumentBuilder builder = newSecureDocumentBuilder();
             Document document = builder.parse(new InputSource(new StringReader(xml)));
 
             Element root = document.getDocumentElement();
-            return chunkElement(root, QDRANT_PAYLOAD_CHUNK_CHAR_THRESHOLD);
+            return chunkElement(root, charThreshold);
         } catch (Exception e) {
             return splitXmlChunksByRawSegments(xml);
         }
     }
 
-    public static List<String> splitTextChunks(String text, int chunkSize) {
+    public List<String> splitTextChunks(String text, int chunkSize) {
         List<String> chunks = new ArrayList<>();
         for (int offset = 0; offset < text.length(); offset += chunkSize) {
             int end = Math.min(offset + chunkSize, text.length());
@@ -66,7 +74,7 @@ public final class XmlChunker {
         return factory.newDocumentBuilder();
     }
 
-    private static List<String> chunkElement(Element element, int maxChunkChars) throws Exception {
+    private List<String> chunkElement(Element element, int maxChunkChars) throws Exception {
         String serialized = serializeNode(element);
         if (serialized.length() <= maxChunkChars) {
             return List.of(serialized);
@@ -115,8 +123,8 @@ public final class XmlChunker {
             return splitBodyGroups(element, headerNodes, groups, maxChunkChars);
         }
 
-        if (childNodes.size() > QDRANT_PAYLOAD_CHUNK_SEGMENT_THRESHOLD) {
-            List<List<Node>> groups = groupNodesByCount(childNodes, QDRANT_PAYLOAD_CHUNK_SEGMENT_THRESHOLD);
+        if (childNodes.size() > segmentThreshold) {
+            List<List<Node>> groups = groupNodesByCount(childNodes, segmentThreshold);
             List<String> chunks = new ArrayList<>();
             for (List<Node> group : groups) {
                 chunks.add(buildWrappedXmlChunk(element, group));
@@ -148,7 +156,7 @@ public final class XmlChunker {
         return List.of(serialized);
     }
 
-    private static int serializeNodesLength(List<Node> nodes) throws TransformerException {
+    private int serializeNodesLength(List<Node> nodes) throws TransformerException {
         int length = 0;
         for (Node node : nodes) {
             length += serializeNode(node).length();
@@ -156,7 +164,7 @@ public final class XmlChunker {
         return length;
     }
 
-    private static boolean isHeaderNode(Node node) {
+    private boolean isHeaderNode(Node node) {
         if (node.getNodeType() != Node.ELEMENT_NODE) {
             return false;
         }
@@ -184,7 +192,7 @@ public final class XmlChunker {
                 || "attribute-set".equals(localName);
     }
 
-    private static List<List<Node>> groupNodesBySize(List<Node> nodes, int maxChunkChars) throws Exception {
+    private List<List<Node>> groupNodesBySize(List<Node> nodes, int maxChunkChars) throws Exception {
         List<List<Node>> groups = new ArrayList<>();
         List<Node> currentGroup = new ArrayList<>();
         int currentSize = 0;
@@ -208,7 +216,7 @@ public final class XmlChunker {
         return groups;
     }
 
-    private static List<List<Node>> groupNodesByCount(List<Node> nodes, int maxNodeCount) {
+    private List<List<Node>> groupNodesByCount(List<Node> nodes, int maxNodeCount) {
         List<List<Node>> groups = new ArrayList<>();
         List<Node> currentGroup = new ArrayList<>();
         int count = 0;
@@ -230,7 +238,7 @@ public final class XmlChunker {
         return groups;
     }
 
-    private static String wrapChildChunk(Element parent, Element child, String childChunkXml) throws Exception {
+    private String wrapChildChunk(Element parent, Element child, String childChunkXml) throws Exception {
         DocumentBuilder builder = newSecureDocumentBuilder();
         Document chunkDocument = builder.newDocument();
 
@@ -252,7 +260,7 @@ public final class XmlChunker {
         return serializeNode(parentClone);
     }
 
-    private static List<String> wrapChildChunks(Element parent, Element child, List<String> childChunks) throws Exception {
+    private List<String> wrapChildChunks(Element parent, Element child, List<String> childChunks) throws Exception {
         List<String> wrapped = new ArrayList<>();
         for (String childChunk : childChunks) {
             wrapped.add(wrapChildChunk(parent, child, childChunk));
@@ -271,7 +279,7 @@ public final class XmlChunker {
      * terminate: it always makes a final decision once chunkSize can no
      * longer be reduced (chunkSize == 1).
      */
-    private static List<String> splitTextContentIntoChunks(Element element, int maxChunkChars) throws Exception {
+    private List<String> splitTextContentIntoChunks(Element element, int maxChunkChars) throws Exception {
         String text = element.getTextContent();
         if (text == null || text.isBlank()) {
             return List.of(serializeNode(element));
@@ -311,7 +319,7 @@ public final class XmlChunker {
         }
     }
 
-    private static String buildElementWithText(Element source, String text) throws Exception {
+    private String buildElementWithText(Element source, String text) throws Exception {
         DocumentBuilder builder = newSecureDocumentBuilder();
         Document document = builder.newDocument();
 
@@ -323,7 +331,7 @@ public final class XmlChunker {
         return serializeNode(element);
     }
 
-    private static List<String> splitBodyGroups(Element root, List<Node> headerNodes, List<List<Node>> groups, int maxChunkChars) throws Exception {
+    private List<String> splitBodyGroups(Element root, List<Node> headerNodes, List<List<Node>> groups, int maxChunkChars) throws Exception {
         List<String> chunks = new ArrayList<>();
         for (List<Node> group : groups) {
             if (group.isEmpty()) {
@@ -348,7 +356,7 @@ public final class XmlChunker {
         return chunks;
     }
 
-    private static String buildWrappedXmlChunkWithChild(Element root, List<Node> headerNodes, String childChunkXml) throws Exception {
+    private String buildWrappedXmlChunkWithChild(Element root, List<Node> headerNodes, String childChunkXml) throws Exception {
         DocumentBuilder builder = newSecureDocumentBuilder();
         Document chunkDocument = builder.newDocument();
 
@@ -367,7 +375,7 @@ public final class XmlChunker {
         return serializeNode(chunkDocument);
     }
 
-    private static String serializeNode(Node node) throws TransformerException {
+    private String serializeNode(Node node) throws TransformerException {
         Transformer transformer = TransformerFactory.newInstance().newTransformer();
         transformer.setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "yes");
         StringWriter writer = new StringWriter();
@@ -375,7 +383,7 @@ public final class XmlChunker {
         return writer.toString();
     }
 
-    private static String buildWrappedXmlChunk(Element root, List<Node> childNodes) throws TransformerException {
+    private String buildWrappedXmlChunk(Element root, List<Node> childNodes) throws TransformerException {
         try {
             DocumentBuilder builder = newSecureDocumentBuilder();
             Document chunkDocument = builder.newDocument();
@@ -398,7 +406,7 @@ public final class XmlChunker {
         }
     }
 
-    private static void copyAttributes(Element source, Element target) {
+    private void copyAttributes(Element source, Element target) {
         NamedNodeMap attrs = source.getAttributes();
         for (int i = 0; i < attrs.getLength(); i++) {
             Node attr = attrs.item(i);
@@ -410,7 +418,7 @@ public final class XmlChunker {
         }
     }
 
-    private static List<String> splitXmlChunksByRawSegments(String xml) {
+    private List<String> splitXmlChunksByRawSegments(String xml) {
         List<String> segments = splitXmlSegments(xml);
         List<String> chunks = new ArrayList<>();
         StringBuilder current = new StringBuilder();
@@ -421,7 +429,7 @@ public final class XmlChunker {
                 continue;
             }
 
-            if (currentSegmentCount >= QDRANT_PAYLOAD_CHUNK_SEGMENT_THRESHOLD && current.length() > 0) {
+            if (currentSegmentCount >= segmentThreshold && current.length() > 0) {
                 chunks.add(current.toString());
                 current.setLength(0);
                 currentSegmentCount = 0;
@@ -441,7 +449,7 @@ public final class XmlChunker {
     // Best-effort fallback for XML that failed to parse (e.g. malformed input).
     // Splits naively on '>' — may mis-split content inside comments, CDATA,
     // or attribute values, but only runs when full DOM parsing already failed.
-    private static List<String> splitXmlSegments(String xml) {
+    private List<String> splitXmlSegments(String xml) {
         List<String> segments = new ArrayList<>();
         int start = 0;
 

@@ -48,7 +48,7 @@ class DocumentProcessingServiceTest {
         String longText = "x".repeat(2500);
         String content = "<root><payload>" + longText + "</payload></root>";
 
-        List<String> chunks = XmlChunker.splitXmlChunks(content);
+        List<String> chunks = new XmlChunker().splitXmlChunks(content);
 
         assertTrue(chunks.size() > 1);
         for (String chunk : chunks) {
@@ -70,7 +70,7 @@ class DocumentProcessingServiceTest {
                 + "</xsl:template>"
                 + "</xsl:stylesheet>";
 
-        List<String> chunks = XmlChunker.splitXmlChunks(content);
+        List<String> chunks = new XmlChunker().splitXmlChunks(content);
 
         assertTrue(chunks.size() > 1, "Expected the large template body to be split across multiple chunks");
         long templateChunkCount = chunks.stream().filter(chunk -> chunk.contains("<xsl:template") && chunk.contains("</xsl:template>")).count();
