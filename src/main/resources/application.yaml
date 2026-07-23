@@ -43,6 +43,10 @@ qdrant:
   use-tls: false
   collection-name: mapping-documents
   # api-key:
+  payload:
+    chunk-segment-threshold: 5
+    chunk-char-thresholdL: 1800
+    
 
 #############################################################
 # Ollama

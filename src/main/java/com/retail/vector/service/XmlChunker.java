@@ -27,11 +27,11 @@ public class XmlChunker {
     private final int charThreshold;
 
     public XmlChunker() {
-        this(2, 800);
+        this(5, 1800);
     }
 
-    public XmlChunker(@Value("${qdrant.payload.chunk-segment-threshold:2}") int segmentThreshold,
-                     @Value("${qdrant.payload.chunk-char-threshold:800}") int charThreshold) {
+    public XmlChunker(@Value("${qdrant.payload.chunk-segment-threshold}") int segmentThreshold,
+                     @Value("${qdrant.payload.chunk-char-threshold}") int charThreshold) {
         this.segmentThreshold = segmentThreshold;
         this.charThreshold = charThreshold;
     }
