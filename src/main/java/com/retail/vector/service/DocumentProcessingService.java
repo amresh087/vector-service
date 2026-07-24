@@ -76,7 +76,7 @@ public class DocumentProcessingService {
                         || "idoc-output-sample".equalsIgnoreCase(event.getMappingType());
 
                 if (shouldChunkXml) {
-                    List<String> chunkTexts = xmlChunker.splitXmlChunks(original);
+                    List<String> chunkTexts = xmlChunker.splitXmlChunks(original,4);
                     List<PointStruct> points = new ArrayList<>();
 
                     for (int chunkIndex = 0; chunkIndex < chunkTexts.size(); chunkIndex++) {

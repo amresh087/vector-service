@@ -36,15 +36,26 @@ public class XmlChunker {
         this.charThreshold = charThreshold;
     }
 
+    /**
+     * Default method splitting into 2 chunks.
+     */
     public List<String> splitXmlChunks(String xml) {
+        return splitXmlChunks(xml, 2);
+    }
+
+    /**
+     * Unified method where targetChunks decides how many chunks to create
+     * while guaranteeing zero tags, attributes, or child nodes are missed or dropped.
+     */
+    public List<String> splitXmlChunks(String xml, int targetChunks) {
         try {
             DocumentBuilder builder = newSecureDocumentBuilder();
             Document document = builder.parse(new InputSource(new StringReader(xml)));
 
             Element root = document.getDocumentElement();
-            return chunkElement(root, charThreshold);
+            return chunkElementSafely(root, targetChunks);
         } catch (Exception e) {
-            return splitXmlChunksByRawSegments(xml);
+            return splitRawXmlSafely(xml, targetChunks);
         }
     }
 
@@ -60,7 +71,6 @@ public class XmlChunker {
     /**
      * Creates a DocumentBuilder with secure processing enabled and external
      * entity resolution / DOCTYPE declarations disabled to prevent XXE attacks.
-     * Centralized here so every call site gets the same hardening.
      */
     private static DocumentBuilder newSecureDocumentBuilder() throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -74,305 +84,49 @@ public class XmlChunker {
         return factory.newDocumentBuilder();
     }
 
-    private List<String> chunkElement(Element element, int maxChunkChars) throws Exception {
-        String serialized = serializeNode(element);
-        if (serialized.length() <= maxChunkChars) {
-            return List.of(serialized);
-        }
-
-        List<Node> childNodes = new ArrayList<>();
+    private List<String> chunkElementSafely(Element element, int targetChunks) throws Exception {
+        List<Node> allChildNodes = new ArrayList<>();
         NodeList nodeList = element.getChildNodes();
         for (int i = 0; i < nodeList.getLength(); i++) {
-            Node child = nodeList.item(i);
-            if (child.getNodeType() == Node.TEXT_NODE && child.getTextContent().isBlank()) {
-                continue;
-            }
-            childNodes.add(child);
+            allChildNodes.add(nodeList.item(i));
         }
 
-        boolean hasElementChildren = false;
-        for (Node child : childNodes) {
-            if (child.getNodeType() == Node.ELEMENT_NODE) {
-                hasElementChildren = true;
-                break;
-            }
-        }
-
-        if (!hasElementChildren && !element.getTextContent().isBlank()) {
-            return splitTextContentIntoChunks(element, maxChunkChars);
-        }
-
-        List<Node> headerNodes = new ArrayList<>();
-        List<Node> bodyNodes = new ArrayList<>();
-        boolean seenBody = false;
-        for (Node child : childNodes) {
-            if (!seenBody && child.getNodeType() == Node.ELEMENT_NODE && isHeaderNode(child)) {
-                headerNodes.add(child);
-            } else {
-                seenBody = true;
-                bodyNodes.add(child);
-            }
-        }
-
-        if (!headerNodes.isEmpty() && !bodyNodes.isEmpty()) {
-            int availableSize = Math.max(0, maxChunkChars - serializeNodesLength(headerNodes));
-            if (availableSize <= 0) {
-                availableSize = maxChunkChars;
-            }
-            List<List<Node>> groups = groupNodesBySize(bodyNodes, availableSize);
-            return splitBodyGroups(element, headerNodes, groups, maxChunkChars);
-        }
-
-        if (childNodes.size() > segmentThreshold) {
-            List<List<Node>> groups = groupNodesByCount(childNodes, segmentThreshold);
-            List<String> chunks = new ArrayList<>();
-            for (List<Node> group : groups) {
-                chunks.add(buildWrappedXmlChunk(element, group));
-            }
-            return chunks;
-        }
-
-        if (childNodes.size() > 1) {
-            List<List<Node>> groups = groupNodesBySize(childNodes, maxChunkChars);
-            if (groups.size() > 1) {
-                List<String> chunks = new ArrayList<>();
-                for (List<Node> group : groups) {
-                    chunks.add(buildWrappedXmlChunk(element, group));
-                }
-                return chunks;
-            }
-        }
-
-        for (Node child : childNodes) {
-            if (child.getNodeType() == Node.ELEMENT_NODE) {
-                Element childElement = (Element) child;
-                List<String> childChunks = chunkElement(childElement, maxChunkChars);
-                if (childChunks.size() > 1) {
-                    return wrapChildChunks(element, childElement, childChunks);
-                }
-            }
-        }
-
-        return List.of(serialized);
-    }
-
-    private int serializeNodesLength(List<Node> nodes) throws TransformerException {
-        int length = 0;
-        for (Node node : nodes) {
-            length += serializeNode(node).length();
-        }
-        return length;
-    }
-
-    private boolean isHeaderNode(Node node) {
-        if (node.getNodeType() != Node.ELEMENT_NODE) {
-            return false;
-        }
-
-        String localName = node.getLocalName();
-        String nodeName = node.getNodeName();
-        String namespace = node.getNamespaceURI();
-        boolean isXslNamespace = namespace != null && namespace.contains("w3.org");
-        boolean isXslPrefix = nodeName != null && nodeName.startsWith("xsl:");
-
-        if (!isXslNamespace && !isXslPrefix) {
-            return false;
-        }
-
-        return "output".equals(localName)
-                || "variable".equals(localName)
-                || "import".equals(localName)
-                || "include".equals(localName)
-                || "param".equals(localName)
-                || "strip-space".equals(localName)
-                || "preserve-space".equals(localName)
-                || "namespace-alias".equals(localName)
-                || "decimal-format".equals(localName)
-                || "key".equals(localName)
-                || "attribute-set".equals(localName);
-    }
-
-    private List<List<Node>> groupNodesBySize(List<Node> nodes, int maxChunkChars) throws Exception {
-        List<List<Node>> groups = new ArrayList<>();
-        List<Node> currentGroup = new ArrayList<>();
-        int currentSize = 0;
-
-        for (Node node : nodes) {
-            String serialized = serializeNode(node);
-            int nodeSize = serialized.length();
-            if (!currentGroup.isEmpty() && currentSize + nodeSize > maxChunkChars) {
-                groups.add(currentGroup);
-                currentGroup = new ArrayList<>();
-                currentSize = 0;
-            }
-            currentGroup.add(node);
-            currentSize += nodeSize;
-        }
-
-        if (!currentGroup.isEmpty()) {
-            groups.add(currentGroup);
-        }
-
-        return groups;
-    }
-
-    private List<List<Node>> groupNodesByCount(List<Node> nodes, int maxNodeCount) {
-        List<List<Node>> groups = new ArrayList<>();
-        List<Node> currentGroup = new ArrayList<>();
-        int count = 0;
-
-        for (Node node : nodes) {
-            if (count >= maxNodeCount) {
-                groups.add(currentGroup);
-                currentGroup = new ArrayList<>();
-                count = 0;
-            }
-            currentGroup.add(node);
-            count++;
-        }
-
-        if (!currentGroup.isEmpty()) {
-            groups.add(currentGroup);
-        }
-
-        return groups;
-    }
-
-    private String wrapChildChunk(Element parent, Element child, String childChunkXml) throws Exception {
-        DocumentBuilder builder = newSecureDocumentBuilder();
-        Document chunkDocument = builder.newDocument();
-
-        Element parentClone = chunkDocument.createElementNS(parent.getNamespaceURI(), parent.getNodeName());
-        copyAttributes(parent, parentClone);
-        chunkDocument.appendChild(parentClone);
-
-        for (int i = 0; i < parent.getChildNodes().getLength(); i++) {
-            Node sibling = parent.getChildNodes().item(i);
-            if (sibling.isSameNode(child)) {
-                Document childDoc = builder.parse(new InputSource(new StringReader(childChunkXml)));
-                Node chunkRoot = childDoc.getDocumentElement();
-                parentClone.appendChild(chunkDocument.importNode(chunkRoot, true));
-            } else {
-                parentClone.appendChild(chunkDocument.importNode(sibling, true));
-            }
-        }
-
-        return serializeNode(parentClone);
-    }
-
-    private List<String> wrapChildChunks(Element parent, Element child, List<String> childChunks) throws Exception {
-        List<String> wrapped = new ArrayList<>();
-        for (String childChunk : childChunks) {
-            wrapped.add(wrapChildChunk(parent, child, childChunk));
-        }
-        return wrapped;
-    }
-
-    /**
-     * Splits an element's text content into multiple chunks, each wrapped back
-     * in a clone of the source element, so that every resulting chunk's
-     * serialized length stays within maxChunkChars.
-     *
-     * The starting chunk size reserves space for the wrapper's actual tag +
-     * attribute overhead (measured directly, not guessed), and halves on each
-     * retry if a candidate split still doesn't fit. The loop is guaranteed to
-     * terminate: it always makes a final decision once chunkSize can no
-     * longer be reduced (chunkSize == 1).
-     */
-    private List<String> splitTextContentIntoChunks(Element element, int maxChunkChars) throws Exception {
-        String text = element.getTextContent();
-        if (text == null || text.isBlank()) {
+        if (allChildNodes.isEmpty() || targetChunks <= 1) {
             return List.of(serializeNode(element));
         }
 
-        // Measure the real wrapper overhead (tag name + attributes) instead of guessing.
-        int overhead = buildElementWithText(element, "").length();
-        int chunkSize = Math.max(1, maxChunkChars - overhead);
-
-        while (true) {
-            List<String> candidateChunks = new ArrayList<>();
-            boolean tooLarge = false;
-
-            for (String textSegment : splitTextChunks(text, chunkSize)) {
-                String wrapped = buildElementWithText(element, textSegment);
-                if (wrapped.length() > maxChunkChars) {
-                    tooLarge = true;
-                    break;
-                }
-                candidateChunks.add(wrapped);
-            }
-
-            if (!tooLarge && candidateChunks.size() > 1) {
-                return candidateChunks;
-            }
-
-            if (chunkSize <= 1) {
-                // Can't shrink further. Return the best available result:
-                // a single wrapped chunk if it fit, otherwise the raw fallback.
-                if (!tooLarge && candidateChunks.size() == 1) {
-                    return candidateChunks;
-                }
-                return List.of(buildElementWithText(element, text));
-            }
-
-            chunkSize = Math.max(1, chunkSize / 2);
-        }
-    }
-
-    private String buildElementWithText(Element source, String text) throws Exception {
-        DocumentBuilder builder = newSecureDocumentBuilder();
-        Document document = builder.newDocument();
-
-        Element element = document.createElementNS(source.getNamespaceURI(), source.getNodeName());
-        copyAttributes(source, element);
-        element.setTextContent(text);
-        document.appendChild(element);
-
-        return serializeNode(element);
-    }
-
-    private List<String> splitBodyGroups(Element root, List<Node> headerNodes, List<List<Node>> groups, int maxChunkChars) throws Exception {
+        List<List<Node>> partitionedGroups = partitionNodesEvenly(allChildNodes, targetChunks);
         List<String> chunks = new ArrayList<>();
-        for (List<Node> group : groups) {
+
+        for (List<Node> group : partitionedGroups) {
             if (group.isEmpty()) {
                 continue;
             }
-
-            List<Node> combined = new ArrayList<>(headerNodes);
-            combined.addAll(group);
-            if (group.size() == 1 && group.get(0).getNodeType() == Node.ELEMENT_NODE) {
-                Element bodyElement = (Element) group.get(0);
-                List<String> childChunks = chunkElement(bodyElement, Math.max(1, maxChunkChars - serializeNodesLength(headerNodes)));
-                if (childChunks.size() > 1) {
-                    for (String childChunk : childChunks) {
-                        chunks.add(buildWrappedXmlChunkWithChild(root, headerNodes, childChunk));
-                    }
-                    continue;
-                }
-            }
-
-            chunks.add(buildWrappedXmlChunk(root, combined));
+            chunks.add(buildWrappedXmlChunk(element, group));
         }
+
         return chunks;
     }
 
-    private String buildWrappedXmlChunkWithChild(Element root, List<Node> headerNodes, String childChunkXml) throws Exception {
-        DocumentBuilder builder = newSecureDocumentBuilder();
-        Document chunkDocument = builder.newDocument();
+    private List<List<Node>> partitionNodesEvenly(List<Node> nodes, int targetChunks) {
+        List<List<Node>> groups = new ArrayList<>();
+        int totalNodes = nodes.size();
+        
+        int actualChunks = Math.min(targetChunks, totalNodes);
+        int baseSize = totalNodes / actualChunks;
+        int remainder = totalNodes % actualChunks;
 
-        Element chunkRoot = chunkDocument.createElementNS(root.getNamespaceURI(), root.getNodeName());
-        copyAttributes(root, chunkRoot);
-        chunkDocument.appendChild(chunkRoot);
-
-        for (Node headerNode : headerNodes) {
-            chunkRoot.appendChild(chunkDocument.importNode(headerNode, true));
+        int currentIndex = 0;
+        for (int i = 0; i < actualChunks; i++) {
+            int currentChunkSize = baseSize + (i < remainder ? 1 : 0);
+            List<Node> group = new ArrayList<>();
+            for (int j = 0; j < currentChunkSize; j++) {
+                group.add(nodes.get(currentIndex++));
+            }
+            groups.add(group);
         }
 
-        Document childDoc = builder.parse(new InputSource(new StringReader(childChunkXml)));
-        Node chunkRootChild = childDoc.getDocumentElement();
-        chunkRoot.appendChild(chunkDocument.importNode(chunkRootChild, true));
-
-        return serializeNode(chunkDocument);
+        return groups;
     }
 
     private String serializeNode(Node node) throws TransformerException {
@@ -418,37 +172,34 @@ public class XmlChunker {
         }
     }
 
-    private List<String> splitXmlChunksByRawSegments(String xml) {
+    private List<String> splitRawXmlSafely(String xml, int targetChunks) {
         List<String> segments = splitXmlSegments(xml);
-        List<String> chunks = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        int currentSegmentCount = 0;
-
-        for (String segment : segments) {
-            if (segment.isEmpty()) {
-                continue;
-            }
-
-            if (currentSegmentCount >= segmentThreshold && current.length() > 0) {
-                chunks.add(current.toString());
-                current.setLength(0);
-                currentSegmentCount = 0;
-            }
-
-            current.append(segment);
-            currentSegmentCount++;
+        if (segments.size() <= targetChunks) {
+            return List.of(xml);
         }
 
-        if (current.length() > 0) {
-            chunks.add(current.toString());
+        List<List<String>> partitionedSegments = new ArrayList<>();
+        int totalSegments = segments.size();
+        int baseSize = totalSegments / targetChunks;
+        int remainder = totalSegments % targetChunks;
+
+        int currentIndex = 0;
+        for (int i = 0; i < targetChunks; i++) {
+            int currentSize = baseSize + (i < remainder ? 1 : 0);
+            StringBuilder sb = new StringBuilder();
+            for (int j = 0; j < currentSize; j++) {
+                sb.append(segments.get(currentIndex++));
+            }
+            partitionedSegments.add(List.of(sb.toString()));
         }
 
-        return chunks;
+        List<String> result = new ArrayList<>();
+        for (List<String> group : partitionedSegments) {
+            result.add(String.join("", group));
+        }
+        return result;
     }
 
-    // Best-effort fallback for XML that failed to parse (e.g. malformed input).
-    // Splits naively on '>' — may mis-split content inside comments, CDATA,
-    // or attribute values, but only runs when full DOM parsing already failed.
     private List<String> splitXmlSegments(String xml) {
         List<String> segments = new ArrayList<>();
         int start = 0;

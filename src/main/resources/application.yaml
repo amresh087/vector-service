@@ -45,7 +45,7 @@ qdrant:
   # api-key:
   payload:
     chunk-segment-threshold: 5
-    chunk-char-thresholdL: 1800
+    chunk-char-thresholdL: 100000
     
 
 #############################################################
