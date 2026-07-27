@@ -24,6 +24,14 @@ class DocumentProcessingServiceTest {
     }
 
     @Test
+    void shouldValidateEmbeddingsBeforeCreatingQdrantVectors() {
+        assertTrue(DocumentProcessingService.isValidEmbedding(List.of(0.1, 0.2)));
+        assertTrue(DocumentProcessingService.isValidEmbedding(List.of(0.0)));
+        assertTrue(!DocumentProcessingService.isValidEmbedding(null));
+        assertTrue(!DocumentProcessingService.isValidEmbedding(List.of()));
+    }
+
+    @Test
     void shouldChunkXmlContentByElementCountAndProduceWellFormedFragments() {
         String segment = "<item>value</item>";
         String content = "<root>" + segment.repeat(200) + "</root>";

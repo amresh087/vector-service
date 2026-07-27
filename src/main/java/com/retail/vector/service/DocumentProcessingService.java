@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +45,24 @@ public class DocumentProcessingService {
 
     @Value("${qdrant.collection-name}")
     private String collectionName;
+
+    @Value("${xml.chunk.size}")
+    private int xmlChunkSize;
+
+    @Value("${xml.chunk.mapping-types}")
+    private String xmlChunkMappingTypes;
+
+    @Value("${xml.chunk.text-chunk-size}")
+    private int textChunkSize;
+
+    @Value("${embedding.retry.attempts}")
+    private int embeddingRetryAttempts;
+
+    @Value("${embedding.retry.initial-delay-ms}")
+    private long embeddingRetryInitialDelayMs;
+
+    @Value("${embedding.retry.backoff-multiplier}")
+    private double embeddingRetryBackoffMultiplier;
 
     @Autowired
     public DocumentProcessingService(MinioClient minioClient, AiTranformationServiceClient aiClient,
@@ -72,19 +91,24 @@ public class DocumentProcessingService {
 
 
                 String original = new String(objStream.readAllBytes(), StandardCharsets.UTF_8);
-                boolean shouldChunkXml = "mapping-xslt-templet-xml".equalsIgnoreCase(event.getMappingType())
-                        || "idoc-output-sample".equalsIgnoreCase(event.getMappingType());
+                boolean shouldChunkXml = Arrays.stream(xmlChunkMappingTypes.split(","))
+                    .map(String::trim)
+                    .anyMatch(t -> t.equalsIgnoreCase(event.getMappingType()));
 
                 if (shouldChunkXml) {
-                    List<String> chunkTexts = xmlChunker.splitXmlChunks(original,4);
+                    List<String> chunkTexts = xmlChunker.splitXmlChunks(original, xmlChunkSize);
                     List<PointStruct> points = new ArrayList<>();
 
                     for (int chunkIndex = 0; chunkIndex < chunkTexts.size(); chunkIndex++) {
                         String chunkText = chunkTexts.get(chunkIndex);
                         List<Double> embedding = embedWithRetry(chunkText, event, chunkIndex);
+                        if (!isValidEmbedding(embedding)) {
+                            log.warn("Skipping chunk {} for document {} because embedding was empty", chunkIndex, event.getDocumentId());
+                            continue;
+                        }
+
                         float[] vectorArray = toFloatVector(embedding);
-                        boolean embeddingSucceeded = embedding != null && !embedding.isEmpty();
-                        String status = embeddingSucceeded ? event.getStatus() : "embeddingFailed";
+                        String status = event.getStatus();
 
                         Map<String, io.qdrant.client.grpc.JsonWithInt.Value> payloadMap = new HashMap<>();
                         payloadMap.put("documentId", value(event.getDocumentId()));
@@ -110,7 +134,9 @@ public class DocumentProcessingService {
                         points.add(point);
                     }
 
-                    if (!points.isEmpty()) {
+                    if (points.isEmpty()) {
+                        log.warn("No valid chunks for document {} were indexed because all embeddings were empty", event.getDocumentId());
+                    } else {
                         qdrantClient.upsertAsync(collectionName, points).get();
                         if (points.size() != chunkTexts.size()) {
                             log.warn("Reconciled {} points for {} expected chunks for document {}", points.size(), chunkTexts.size(), event.getDocumentId());
@@ -119,11 +145,13 @@ public class DocumentProcessingService {
                     }
                 } else {
                     List<Double> embedding = embedWithRetry(original, event, -1);
-                    float[] vectorArray = toFloatVector(embedding);
-                    String status = embedding != null && !embedding.isEmpty() ? event.getStatus() : "embeddingFailed";
-                    if (embedding == null || embedding.isEmpty()) {
-                        log.warn("Embedding generation returned empty for document {}", event.getDocumentId());
+                    if (!isValidEmbedding(embedding)) {
+                        log.warn("Skipping indexing for document {} because embedding generation returned empty", event.getDocumentId());
+                        return;
                     }
+
+                    float[] vectorArray = toFloatVector(embedding);
+                    String status = event.getStatus();
 
                     Map<String, io.qdrant.client.grpc.JsonWithInt.Value> payloadMap = new HashMap<>();
                     payloadMap.put("documentId", value(event.getDocumentId()));
@@ -167,8 +195,8 @@ public class DocumentProcessingService {
 
         boolean isXml = payloadText.trim().startsWith("<");
         List<String> chunks = isXml
-                ? xmlChunker.splitXmlChunks(payloadText)
-                : xmlChunker.splitTextChunks(payloadText, 800);
+            ? xmlChunker.splitXmlChunks(payloadText)
+            : xmlChunker.splitTextChunks(payloadText, textChunkSize);
 
         for (int chunkIndex = 0; chunkIndex < chunks.size(); chunkIndex++) {
             payloadMap.put("xsltChunk_" + chunkIndex, value(chunks.get(chunkIndex)));
@@ -179,50 +207,77 @@ public class DocumentProcessingService {
 
     public void processDelete(DocumentEvent event) {
         try {
-            long numericIdDelete = UUID.nameUUIDFromBytes(event.getDocumentId().getBytes(StandardCharsets.UTF_8)).getMostSignificantBits() & Long.MAX_VALUE;
-
-            Points.PointId qdrantPointId = Points.PointId.newBuilder()
-                    .setNum(numericIdDelete)
-                    .build();
-
-            Points.PointsIdsList pointsIdsList = Points.PointsIdsList.newBuilder()
-                    .addIds(qdrantPointId)
-                    .build();
-
-            Points.PointsSelector pointsSelector = Points.PointsSelector.newBuilder()
-                    .setPoints(pointsIdsList)
+            Points.Filter filter = Points.Filter.newBuilder()
+                    .addMust(
+                            Points.Condition.newBuilder()
+                                    .setField(
+                                            Points.FieldCondition.newBuilder()
+                                                    .setKey("documentId")
+                                                    .setMatch(
+                                                            Points.Match.newBuilder()
+                                                                    .setKeyword(event.getDocumentId())
+                                                                    .build())
+                                                    .build())
+                                    .build())
                     .build();
 
             Points.DeletePoints deletePoints = Points.DeletePoints.newBuilder()
                     .setCollectionName(collectionName)
-                    .setPoints(pointsSelector)
+                    .setPoints(
+                            Points.PointsSelector.newBuilder()
+                                    .setFilter(filter)
+                                    .build())
+                    .setWait(true)
                     .build();
 
             qdrantClient.deleteAsync(deletePoints).get();
-            log.info("Deleted document {} from Qdrant collection {}", event.getDocumentId(), collectionName);
 
-        } catch (InterruptedException e) {
-            log.warn("Delete update for document {} was interrupted while waiting on Qdrant", event.getDocumentId(), e);
-            Thread.currentThread().interrupt();
-        } catch (ExecutionException e) {
-            log.error("Failed to delete document {} in Qdrant", event.getDocumentId(), e);
+            log.info("Deleted all points for documentId={}", event.getDocumentId());
+
+        } catch (Exception e) {
+            log.error("Failed to delete document {}", event.getDocumentId(), e);
         }
     }
 
-    private List<Double> embedWithRetry(String content, DocumentEvent event, int chunkIndex) {
-        for (int attempt = 1; attempt <= 3; attempt++) {
-            ResponseEntity<EmbeddingResponse> response = aiClient.createEmbedding(new EmbeddingRequest(content));
-            List<Double> embedding = response.getBody() != null ? response.getBody().getEmbedding() : null;
-            if (embedding != null && !embedding.isEmpty()) {
-                return embedding;
+    private List<Double> embedWithRetry(String chunkText, DocumentEvent event, int chunkIndex) {
+        long delay = embeddingRetryInitialDelayMs;
+        for (int attempt = 1; attempt <= Math.max(1, embeddingRetryAttempts); attempt++) {
+            try {
+
+                EmbeddingRequest request = EmbeddingRequest.builder()
+                        .chunkText(chunkText)
+                        .build();
+
+                ResponseEntity<EmbeddingResponse> response = aiClient.createEmbedding(request);
+                List<Double> embedding = response.getBody() != null ? response.getBody().getEmbedding() : null;
+                if (embedding != null && !embedding.isEmpty()) {
+                    return embedding;
+                }
+                log.warn("Embedding attempt {} returned empty embedding for document {} chunk {}", attempt, event.getDocumentId(), chunkIndex);
+            } catch (Exception e) {
+                log.warn("Embedding attempt {} threw exception for document {} chunk {}: {}", attempt, event.getDocumentId(), chunkIndex, e.getMessage());
             }
-            log.warn("Embedding attempt {} failed for document {} chunk {}", attempt, event.getDocumentId(), chunkIndex);
+
+            if (attempt < embeddingRetryAttempts) {
+                try {
+                    Thread.sleep(delay);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    log.warn("Embedding retry sleep interrupted for document {} chunk {}", event.getDocumentId(), chunkIndex);
+                    break;
+                }
+                delay = (long) (delay * Math.max(1.0, embeddingRetryBackoffMultiplier));
+            }
         }
         return List.of();
     }
 
+    static boolean isValidEmbedding(List<Double> embedding) {
+        return embedding != null && !embedding.isEmpty();
+    }
+
     static float[] toFloatVector(List<Double> embedding) {
-        if (embedding == null || embedding.isEmpty()) {
+        if (!isValidEmbedding(embedding)) {
             return new float[0];
         }
 

@@ -1,19 +1,14 @@
 package com.retail.vector.dto;
 
+import lombok.Builder;
+import lombok.Data;
+
+@Data
+@Builder
 public class EmbeddingRequest {
-    private String prompt;
+    private String chunkText;
+    
+    
 
-    public EmbeddingRequest() {}
-
-    public EmbeddingRequest(String prompt) {
-        this.prompt = prompt;
-    }
-
-    public String getPrompt() {
-        return prompt;
-    }
-
-    public void setPrompt(String prompt) {
-        this.prompt = prompt;
-    }
+    
 }

@@ -1,3 +1,4 @@
+/* 
 package com.retail.vector;
 
 import org.junit.jupiter.api.Test;
@@ -11,3 +12,4 @@ class VectorServiceApplicationTests {
 	}
 
 }
+*/

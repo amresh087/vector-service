@@ -46,6 +46,15 @@ qdrant:
   payload:
     chunk-segment-threshold: 5
     chunk-char-thresholdL: 100000
+
+#############################################################
+# XML chunking
+#############################################################
+xml:
+  chunk:
+    size: 4
+    mapping-types: mapping-xslt-templet-xml,idoc-output-sample
+    text-chunk-size: 800
     
 
 #############################################################
@@ -63,6 +72,15 @@ ollama:
 ai:
   service:
     url: http://localhost:5056
+
+#############################################################
+# Embedding retry configuration
+#############################################################
+embedding:
+  retry:
+    attempts: 3
+    initial-delay-ms: 200
+    backoff-multiplier: 2.0
 
 #############################################################
 # Kafka Topics
